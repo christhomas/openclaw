@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import path from "node:path";
 import type { Pool, PoolClient } from "pg";
 import type { Datastore } from "./datastore.js";
 import { applyStateDbMigrations } from "./state-db-migrations.js";
@@ -58,7 +59,11 @@ async function ensurePool(): Promise<Pool> {
  */
 function normalizeKey(key: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  if (home && key.startsWith(home) && (key.length === home.length || key[home.length] === "/")) {
+  if (
+    home &&
+    key.startsWith(home) &&
+    (key.length === home.length || key[home.length] === path.sep)
+  ) {
     return key.slice(home.length);
   }
   return key;
