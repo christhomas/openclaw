@@ -13,10 +13,11 @@ const KV_TABLE = "openclaw_kv";
  */
 function advisoryLockId(key: string): string {
   const hash = crypto.createHash("sha256").update(key).digest();
-  // Read as signed 64-bit big-endian, then clamp to Number.MAX_SAFE_INTEGER
-  // so the pg driver can send it as a numeric parameter.
+  // Read as signed 64-bit big-endian, take the absolute value, then reduce
+  // modulo MAX_SAFE_INTEGER so the pg driver can send it as a numeric parameter.
   const big = hash.readBigInt64BE(0);
-  const clamped = big % BigInt(Number.MAX_SAFE_INTEGER);
+  const abs = big < 0n ? -big : big;
+  const clamped = abs % BigInt(Number.MAX_SAFE_INTEGER);
   return clamped.toString();
 }
 
