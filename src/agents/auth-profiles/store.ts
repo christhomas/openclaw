@@ -88,9 +88,26 @@ export async function updateAuthProfileStoreWithLock(params: {
   try {
     let resultStore: AuthProfileStore | null = null;
     await getDatastore().updateWithLock<AuthProfileStore>(authPath, (raw) => {
-      // ensureAuthProfileStore reads from multiple sources (runtime snapshots,
-      // legacy stores, main agent fallback). Call it to get the merged store.
-      const store = ensureAuthProfileStore(params.agentDir);
+      // Use the locked DB row as the authoritative base so that concurrent
+      // writers (in PG mode) derive mutations from the latest committed state
+      // rather than a potentially stale process-local cache.
+      let store = coerceAuthStore(raw) ?? { version: AUTH_STORE_VERSION, profiles: {} };
+
+      // For subagents, merge inherited profiles from the main agent store.
+      const mainAuthPath = resolveAuthStorePath();
+      if (params.agentDir && authPath !== mainAuthPath) {
+        const mainStore = loadAuthProfileStoreForAgent(undefined);
+        store = mergeAuthProfileStores(mainStore, store);
+      }
+
+      // Overlay any runtime snapshot overrides (e.g. gateway-injected creds).
+      const runtimeStore = resolveRuntimeAuthProfileStore(params.agentDir);
+      if (runtimeStore) {
+        store = mergeAuthProfileStores(store, runtimeStore);
+      }
+
+      syncExternalCliCredentials(store);
+
       const shouldSave = params.updater(store);
       resultStore = store;
       if (shouldSave) {

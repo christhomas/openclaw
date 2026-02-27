@@ -58,7 +58,7 @@ async function ensurePool(): Promise<Pool> {
  */
 function normalizeKey(key: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  if (home && key.startsWith(home)) {
+  if (home && key.startsWith(home) && (key.length === home.length || key[home.length] === "/")) {
     return key.slice(home.length);
   }
   return key;
