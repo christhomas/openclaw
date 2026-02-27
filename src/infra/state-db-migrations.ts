@@ -52,6 +52,10 @@ export async function applyStateDbMigrations(pool: Pool): Promise<void> {
   try {
     await client.query("begin");
 
+    // Serialize concurrent migration attempts so two processes booting
+    // against a fresh DB don't race on the same migration inserts.
+    await client.query("select pg_advisory_xact_lock(8675309)");
+
     await client.query(`
       create table if not exists ${MIGRATIONS_TABLE} (
         id text primary key,
