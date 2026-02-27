@@ -75,10 +75,21 @@ export class PostgresDatastore implements Datastore {
   }
 
   /**
-   * Kick off a background preload so the cache is warm for future reads.
+   * Preload all keys into the cache.  Errors propagate so callers like
+   * `initDatastore()` can fail fast on connection/migration problems.
    * Safe to call multiple times — only the first invocation triggers a load.
    */
   ensurePreloaded(): Promise<void> {
+    if (!this._preloadPromise) {
+      this._preloadPromise = this.preloadAll().then(() => {
+        this._preloaded = true;
+      });
+    }
+    return this._preloadPromise;
+  }
+
+  /** Best-effort background preload for lazy cache warming from read(). */
+  private _triggerBackgroundPreload(): void {
     if (!this._preloadPromise) {
       this._preloadPromise = this.preloadAll()
         .then(() => {
@@ -86,11 +97,9 @@ export class PostgresDatastore implements Datastore {
         })
         .catch((err) => {
           console.warn("[postgres-datastore] background preload failed:", err);
-          // Allow retry on next call.
           this._preloadPromise = null;
         });
     }
-    return this._preloadPromise;
   }
 
   /**
@@ -103,8 +112,11 @@ export class PostgresDatastore implements Datastore {
   read<T>(key: string): T | null {
     const dbKey = normalizeKey(key);
     if (!this._preloaded && !cache.has(dbKey)) {
-      // Trigger lazy preload so future reads hit the cache.
-      void this.ensurePreloaded();
+      console.warn(
+        `[postgres-datastore] read() before preload — call initDatastore() at startup. key=${dbKey}`,
+      );
+      // Best-effort background preload so future reads hit the cache.
+      this._triggerBackgroundPreload();
     }
     return (cache.get(dbKey) as T) ?? null;
   }
@@ -147,7 +159,7 @@ export class PostgresDatastore implements Datastore {
     const pool = await ensurePool();
     const dbKey = normalizeKey(key);
 
-    await withTransaction(pool, async (client) => {
+    const committed = await withTransaction(pool, async (client) => {
       // Acquire a transaction-scoped advisory lock so that concurrent callers
       // serialize even when the row does not exist yet.  SELECT ... FOR UPDATE
       // only locks existing rows; without this, two concurrent first-time
@@ -168,9 +180,15 @@ export class PostgresDatastore implements Datastore {
            on conflict (key) do update set data = excluded.data, updated_at = excluded.updated_at`,
           [dbKey, result],
         );
-        cache.set(dbKey, structuredClone(result));
+        return result;
       }
+      return undefined;
     });
+
+    // Update cache only after the transaction has committed successfully.
+    if (committed !== undefined) {
+      cache.set(dbKey, structuredClone(committed));
+    }
   }
 
   async delete(key: string): Promise<void> {

@@ -79,6 +79,10 @@ export function registerPreActionHooks(program: Command, programVersion: string)
     if (CONFIG_GUARD_BYPASS_COMMANDS.has(commandPath[0])) {
       return;
     }
+    // Initialize the datastore early so the PG cache is warm before any reads.
+    const { initDatastore } = await import("../../infra/datastore.js");
+    await initDatastore();
+
     const { ensureConfigReady } = await import("./config-guard.js");
     await ensureConfigReady({ runtime: defaultRuntime, commandPath });
     // Load plugins for commands that need channel access
